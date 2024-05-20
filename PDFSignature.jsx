@@ -1,3 +1,4 @@
+
 import React, {useEffect, useState} from 'react';
 import {
   StyleSheet,
@@ -6,6 +7,8 @@ import {
   Text,
   TouchableOpacity,
   Platform,
+  PermissionsAndroid,
+  Alert,
 } from 'react-native';
 import {ActivityIndicator} from 'react-native';
 import Pdf from 'react-native-pdf';
@@ -13,9 +16,10 @@ const RNFS = require('react-native-fs');
 import {PDFDocument} from 'pdf-lib';
 import {decode as atob, encode as btoa} from 'base-64';
 import SignaturePad from './SignaturePad';
+import DocumentPicker from 'react-native-document-picker';
+import RNFetchBlob from 'rn-fetch-blob';
 
 export default PDFSignature = () => {
-  const sourceUrl = 'http://samples.leanpub.com/thereactnativebook-sample.pdf';
   const [fileDownloaded, setFileDownloaded] = useState(false);
   const [getSignaturePad, setSignaturePad] = useState(false);
   const [pdfEditMode, setPdfEditMode] = useState(false);
@@ -27,23 +31,20 @@ export default PDFSignature = () => {
   const [newPdfPath, setNewPdfPath] = useState(null);
   const [pageWidth, setPageWidth] = useState(0);
   const [pageHeight, setPageHeight] = useState(0);
-  const [filePath, setFilePath] = useState(
-    `${RNFS.DocumentDirectoryPath}/react-native.pdf`,
-  );
+  const [filePath, setFilePath] = useState(null);
+
   useEffect(() => {
-    this.downloadFile();
     if (signatureBase64) {
-      setSignatureArrayBuffer(this._base64ToArrayBuffer(signatureBase64));
+      setSignatureArrayBuffer(_base64ToArrayBuffer(signatureBase64));
     }
     if (newPdfSaved) {
       setFilePath(newPdfPath);
-      setPdfArrayBuffer(this._base64ToArrayBuffer(pdfBase64));
+      setPdfArrayBuffer(_base64ToArrayBuffer(pdfBase64));
     }
-    // console.log('filePath', filePath);
   }, [signatureBase64, filePath, newPdfSaved]);
 
-  ////////////converting a base64-encoded string into an array buffer////
-  _base64ToArrayBuffer = base64 => {
+  // Convert a base64-encoded string into an array buffer
+  const _base64ToArrayBuffer = base64 => {
     const binary_string = atob(base64);
     const len = binary_string.length;
     const bytes = new Uint8Array(len);
@@ -52,10 +53,10 @@ export default PDFSignature = () => {
     }
     return bytes.buffer;
   };
-  /////////converting a Uint8Array (representing binary data) into a base64-encoded string////
 
-  _uint8ToBase64 = u8Arr => {
-    const CHUNK_SIZE = 0x8000; //arbitrary number
+  // Convert a Uint8Array (representing binary data) into a base64-encoded string
+  const _uint8ToBase64 = u8Arr => {
+    const CHUNK_SIZE = 0x8000; // Arbitrary number
     let index = 0;
     const length = u8Arr.length;
     let result = '';
@@ -67,32 +68,38 @@ export default PDFSignature = () => {
     }
     return btoa(result);
   };
-  //////////downloading a file from a URL and saving it to a specified file path using React Native File System (RNFS)
-
-  downloadFile = () => {
-    if (!fileDownloaded) {
-      // console.log('___downloadFile -> Start');
-      RNFS.downloadFile({
-        fromUrl: sourceUrl,
-        toFile: filePath,
-      }).promise.then(res => {
-        // console.log('___downloadFile -> File downloaded', res);
-        setFileDownloaded(true);
-        this.readFile();
+///////////upload pdf////////////
+  const selectFile = async () => {
+    try {
+      const res = await DocumentPicker.pick({
+        type: [DocumentPicker.types.pdf],
       });
+      const fileUri = res[0].uri;
+      const fileName = res[0].name;
+      const destPath = `${RNFS.DocumentDirectoryPath}/${fileName}`;
+
+      await RNFS.copyFile(fileUri, destPath);
+      setFilePath(destPath);
+      setFileDownloaded(true);
+      readFile(destPath);
+    } catch (err) {
+      if (DocumentPicker.isCancel(err)) {
+        console.log('User cancelled the document picker');
+      } else {
+        throw err;
+      }
     }
   };
-  readFile = () => {
-    RNFS.readFile(
-      `${RNFS.DocumentDirectoryPath}/react-native.pdf`,
-      'base64',
-    ).then(contents => {
+
+  const readFile = path => {
+    RNFS.readFile(path, 'base64').then(contents => {
       setPdfBase64(contents);
-      setPdfArrayBuffer(this._base64ToArrayBuffer(contents));
+      setPdfArrayBuffer(_base64ToArrayBuffer(contents));
     });
   };
+
   const getSignature = () => {
-    console.log('___getSignature -> Start');
+    console.log('_getSignature -> Start');
     setSignaturePad(true);
   };
 
@@ -101,8 +108,8 @@ export default PDFSignature = () => {
     setSignaturePad(false);
     setPdfEditMode(true);
   };
-  ////////put edit mode
-  handleSingleTap = async (page, x, y) => {
+
+  const handleSingleTap = async (page, x, y) => {
     if (pdfEditMode) {
       setNewPdfSaved(false);
       setFilePath(null);
@@ -110,9 +117,9 @@ export default PDFSignature = () => {
       const pdfDoc = await PDFDocument.load(pdfArrayBuffer);
       const pages = pdfDoc.getPages();
       const firstPage = pages[page - 1];
-      //
+
       const signatureImage = await pdfDoc.embedPng(signatureArrayBuffer);
-      if (Platform.OS == 'ios') {
+      if (Platform.OS === 'ios') {
         firstPage.drawImage(signatureImage, {
           x: (pageWidth * (x - 12)) / Dimensions.get('window').width,
           y: pageHeight - (pageHeight * (y + 12)) / 540,
@@ -130,13 +137,12 @@ export default PDFSignature = () => {
           height: 50,
         });
       }
-      //And save the pdf document
+
       const pdfBytes = await pdfDoc.save();
-      const pdfBase64 = this._uint8ToBase64(pdfBytes);
+      const pdfBase64 = _uint8ToBase64(pdfBytes);
       const path = `${
         RNFS.DocumentDirectoryPath
       }/react-native_signed_${Date.now()}.pdf`;
-      console.log('path', path);
       RNFS.writeFile(path, pdfBase64, 'base64')
         .then(success => {
           setNewPdfPath(path);
@@ -148,67 +154,93 @@ export default PDFSignature = () => {
         });
     }
   };
+
+  ///////////download///////
+  const downloadPdf = async pdfPath => {
+    try {
+      const downloads = RNFS.DownloadDirectoryPath;
+      const newFilePath = `${downloads}/signed_document_${Date.now()}.pdf`;
+
+      // Copy the signed PDF to the Downloads directory
+      await RNFS.copyFile(pdfPath, newFilePath);
+
+      console.log('Downloaded:', newFilePath);
+
+      Alert.alert('Download Success', 'PDF downloaded successfully!');
+    } catch (error) {
+      console.log('Error downloading PDF:', error);
+      Alert.alert('Download Error', 'Failed to download PDF.');
+    }
+  };
+
   return (
     <View style={styles.container}>
-      <Text style={styles.headerText}>React Native PDFSignature</Text>
-      {getSignaturePad ? (
+      <Text style={styles.headerText}>React Native PDF Signature</Text>
+      {!fileDownloaded ? (
+        <TouchableOpacity onPress={selectFile} style={styles.button2}>
+          <Text style={styles.buttonText}>Upload PDF</Text>
+        </TouchableOpacity>
+      ) : getSignaturePad ? (
         <SignaturePad onSignatureChange={handleSignature} />
       ) : (
-        fileDownloaded && (
-          <View>
-            {filePath ? (
-              <View>
-                <Pdf
-                  minScale={1.0}
-                  maxScale={1.0}
-                  scale={1.0}
-                  spacing={0}
-                  fitPolicy={0}
-                  enablePaging={true}
-                  source={{uri: filePath}}
-                  usePDFKit={false}
-                  onLoadComplete={(
-                    numberOfPages,
-                    filePath,
-                    {width, height},
-                  ) => {
-                    setPageWidth(width);
-                    setPageHeight(height);
-                  }}
-                  onPageSingleTap={(page, x, y) => {
-                    this.handleSingleTap(page, x, y);
-                  }}
-                  onPageChanged={(page, numberOfPages) => {}}
-                  onError={error => {
-                    console.log(error);
-                  }}
-                  onPressLink={uri => {}}
-                  style={styles.pdf}
-                />
+        <View>
+          {filePath ? (
+            <View>
+              <Pdf
+                minScale={1.0}
+                maxScale={1.0}
+                scale={1.0}
+                spacing={0}
+                fitPolicy={0}
+                enablePaging={true}
+                source={{uri: filePath}}
+                usePDFKit={false}
+                onLoadComplete={(numberOfPages, filePath, {width, height}) => {
+                  setPageWidth(width);
+                  setPageHeight(height);
+                }}
+                onPageSingleTap={(page, x, y) => {
+                  handleSingleTap(page, x, y);
+                }}
+                onPageChanged={(page, numberOfPages) => {}}
+                onError={error => {
+                  console.log(error);
+                }}
+                onPressLink={uri => {}}
+                style={styles.pdf}
+              />
+            </View>
+          ) : (
+            <>
+              <View style={styles.button3}>
+                <Text style={styles.buttonText}>Saving PDF....</Text>
               </View>
-            ) : (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color="green" />
               </View>
-            )}
+            </>
+          )}
 
-            {pdfEditMode ? (
-              <View style={styles.message}>
-                <Text>Touch where you want to place the signature</Text>
+          {pdfEditMode ? (
+            <View style={styles.message}>
+              <Text>Touch where you want to place the signature</Text>
+            </View>
+          ) : (
+            filePath && (
+              <View>
+                <TouchableOpacity onPress={getSignature} style={styles.button}>
+                  <Text style={styles.buttonText}>Sign Document</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => downloadPdf(filePath)}
+                  style={styles.button}>
+                  <Text style={styles.buttonText}>Download Signed PDF</Text>
+                </TouchableOpacity>
               </View>
-            ) : (
-              filePath && (
-                <View>
-                  <TouchableOpacity
-                    onPress={getSignature}
-                    style={styles.button}>
-                    <Text style={styles.buttonText}>Sign Document</Text>
-                  </TouchableOpacity>
-                </View>
-              )
-            )}
-          </View>
-        )
+            )
+          )}
+        </View>
       )}
     </View>
   );
@@ -233,12 +265,27 @@ const styles = StyleSheet.create({
   },
   button: {
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: 'green',
     padding: 10,
     marginVertical: 10,
   },
   buttonText: {
     color: 'white',
+  },
+  button2: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'green',
+    padding: 10,
+    marginVertical: 190,
+  },
+  button3: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4BB543',
+    padding: 10,
+    marginVertical: 190,
   },
   message: {
     alignItems: 'center',
@@ -247,12 +294,12 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     position: 'absolute',
-    top: 200,
+    top: 220,
     bottom: 0,
     left: 0,
     right: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+    // backgroundColor: 'rgba(255, 255, 255, 0.7)',
   },
 });
